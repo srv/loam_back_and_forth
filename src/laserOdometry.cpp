@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <ros/ros.h>
 
+#include <ros/ros.h>
+
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/PointCloud2.h>
@@ -426,8 +428,12 @@ int main(int argc, char** argv)
   pcl::PointXYZHSV extreOri, extreSel, extreProj, tripod1, tripod2, tripod3, coeff;
 
   bool status = ros::ok();
+
+  ros::Time last_odom_time = ros::Time::now();
+  bool init_odom = false;
+
   while (status) {
-    ros::spinOnce();
+    ros::spinOnce();    
 
     bool sweepEnd = false;
     bool newLaserPoints = false;
@@ -917,6 +923,7 @@ int main(int argc, char** argv)
 
     if (newLaserPoints) {
       float rx, ry, rz, tx, ty, tz;
+      double dx, dy, dz; // Deltas for velocities
       if (sweepEnd) {
         AccumulateRotation(transformSum[0], transformSum[1], transformSum[2], 
                            -transform[0], -transform[1] * 1.05, -transform[2], rx, ry, rz);
@@ -949,6 +956,11 @@ int main(int argc, char** argv)
           TransformToEnd(&laserCloudSurfLast->points[i], &laserCloudSurfLast->points[i], 
                          startTimeLast, startTimeCur);
         }
+
+        // Computing deltas on each coordinate
+        dx = tx - transformSum[3];
+        dy = ty - transformSum[4];
+        dz = tz - transformSum[5];        
 
         TransformReset();
 
@@ -983,6 +995,11 @@ int main(int argc, char** argv)
         ty = transformSum[4] - y2;
         tz = transformSum[5] - (-sin(ry) * x2 + cos(ry) * z2);
 
+        // Computing deltas on each coordinate
+        dx = tx - transformSum[3];
+        dy = ty - transformSum[4];
+        dz = tz - transformSum[5];
+
         PluginIMURotation(rx, ry, rz, imuPitchStartCur, imuYawStartCur, imuRollStartCur, 
                           imuPitchCur, imuYawCur, imuRollCur, rx, ry, rz);
       }
@@ -996,6 +1013,23 @@ int main(int argc, char** argv)
       laserOdometry.pose.pose.position.x = tx;
       laserOdometry.pose.pose.position.y = ty;
       laserOdometry.pose.pose.position.z = tz;
+
+      // Computing velocities
+      if (!init_odom) {
+        init_odom = true;
+        last_odom_time = ros::Time::now();
+      } else {
+
+        ros::Time curr_time = ros::Time::now();
+        double dt = (curr_time - last_odom_time).toSec();
+        last_odom_time = curr_time;
+
+        // Filling the velocity information
+        laserOdometry.twist.twist.linear.x = dx / dt;
+        laserOdometry.twist.twist.linear.y = dy / dt;
+        laserOdometry.twist.twist.linear.z = dz / dt;
+      }
+
       pubLaserOdometry.publish(laserOdometry);
 
       laserOdometryTrans.setRotation(tf::Quaternion(-geoQuat.y, -geoQuat.z, geoQuat.x, geoQuat.w));
